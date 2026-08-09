@@ -5,12 +5,19 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const P = require('pino');
-const readline = require('readline');
+const http = require('http');
 
+const PORT = process.env.PORT || 3000;
 const PHONE_NUMBER = process.env.PHONE_NUMBER;
 
+http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('BerylsBot is running 🤖');
+}).listen(PORT);
+
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('./session');
+  const { state, saveCreds } =
+    await useMultiFileAuthState('./session');
 
   const sock = makeWASocket({
     auth: state,
@@ -20,27 +27,35 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  if (!sock.authState?.creds?.registered && PHONE_NUMBER) {
-    try {
-      const code = await sock.requestPairingCode(PHONE_NUMBER);
-      console.log('YOUR PAIRING CODE:', code);
-    } catch (error) {
-      console.error('Pairing code error:', error);
-    }
-  }
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect } = update;
 
-  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+    if (connection === 'connecting') {
+      console.log('Connecting to WhatsApp...');
+    }
+
     if (connection === 'open') {
-      console.log('BerylsBot is connected! 🤖');
+      console.log('✅ BerylsBot connected!');
+
+      if (PHONE_NUMBER && !state.creds.registered) {
+        try {
+          const code = await sock.requestPairingCode(
+            PHONE_NUMBER.replace(/\D/g, '')
+          );
+
+          console.log('PAIRING CODE:', code);
+        } catch (error) {
+          console.error('Pairing code error:', error);
+        }
+      }
     }
 
     if (connection === 'close') {
-      const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode =
+        lastDisconnect?.error?.output?.statusCode;
 
-      console.log('Connection closed.');
-
-      if (shouldReconnect) {
+      if (statusCode !== DisconnectReason.loggedOut) {
+        console.log('Connection closed. Reconnecting...');
         startBot();
       }
     }
@@ -56,16 +71,17 @@ async function startBot() {
       msg.message.extendedTextMessage?.text ||
       '';
 
+    const chat = msg.key.remoteJid;
+
     if (text === '.ping') {
-      await sock.sendMessage(msg.key.remoteJid, {
+      await sock.sendMessage(chat, {
         text: '🏓 BerylsBot is online!'
       });
     }
 
     if (text === '.menu') {
-      await sock.sendMessage(msg.key.remoteJid, {
-        text:
-`🤖 BERYLSBOT MENU
+      await sock.sendMessage(chat, {
+        text: `🤖 BERYLSBOT
 
 .ping
 .menu
@@ -84,4 +100,4 @@ async function startBot() {
   });
 }
 
-startBot();
+startBot().catch(console.error);
