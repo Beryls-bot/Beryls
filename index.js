@@ -2,7 +2,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  downloadMediaMessage
+  fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
 const P = require('pino');
@@ -46,6 +46,7 @@ function isGroup(jid) {
 
 async function getAdmins(sock, jid) {
   const metadata = await sock.groupMetadata(jid);
+
   return metadata.participants
     .filter(p => p.admin)
     .map(p => p.id);
@@ -58,51 +59,125 @@ async function isAdmin(sock, jid, user) {
   return admins.includes(user);
 }
 
+let reconnecting = false;
+
 async function startBot() {
   const { state, saveCreds } =
     await useMultiFileAuthState('./session');
 
+  let version;
+
+  try {
+    const latest = await fetchLatestBaileysVersion();
+    version = latest.version;
+
+    console.log(
+      `📱 WhatsApp Web version: ${version.join('.')}`
+    );
+  } catch (error) {
+    console.log(
+      '⚠️ Could not fetch latest WhatsApp Web version. Using Baileys default.'
+    );
+    console.error(error.message);
+  }
+
   const sock = makeWASocket({
     auth: state,
+    ...(version ? { version } : {}),
     logger: P({ level: 'silent' }),
     printQRInTerminal: false,
-    markOnlineOnConnect: false
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false
   });
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
+  /*
+  ============================
+  PAIRING CODE
+  ============================
+  */
 
-    if (
-      connection === 'connecting' &&
-      PHONE_NUMBER &&
-      !state.creds.registered
-    ) {
+  if (
+    PHONE_NUMBER &&
+    !state.creds.registered
+  ) {
+    setTimeout(async () => {
       try {
         const number = PHONE_NUMBER.replace(/\D/g, '');
-        const code = await sock.requestPairingCode(number);
+
+        console.log(
+          '📱 Requesting WhatsApp pairing code...'
+        );
+
+        const code =
+          await sock.requestPairingCode(number);
 
         console.log('================================');
-        console.log('🤖 BERYLSBOT PAIRING CODE:', code);
+        console.log(
+          '🤖 BERYLSBOT PAIRING CODE:',
+          code
+        );
         console.log('================================');
       } catch (error) {
-        console.error('Pairing code error:', error);
+        console.error(
+          '❌ Pairing code error:',
+          error.message
+        );
       }
+    }, 3000);
+  }
+
+  /*
+  ============================
+  CONNECTION
+  ============================
+  */
+
+  sock.ev.on('connection.update', async (update) => {
+    const {
+      connection,
+      lastDisconnect
+    } = update;
+
+    if (connection === 'connecting') {
+      console.log('🔄 Connecting to WhatsApp...');
     }
 
     if (connection === 'open') {
-      console.log('✅ BerylsBot connected!');
+      reconnecting = false;
+      console.log('✅ BerylsBot connected to WhatsApp!');
     }
 
     if (connection === 'close') {
       const statusCode =
         lastDisconnect?.error?.output?.statusCode;
 
-      console.log('Connection closed:', statusCode);
+      console.log(
+        '❌ Connection closed:',
+        statusCode || 'unknown'
+      );
 
-      if (statusCode !== DisconnectReason.loggedOut) {
-        setTimeout(startBot, 5000);
+      if (
+        statusCode === DisconnectReason.loggedOut
+      ) {
+        console.log(
+          '🚪 WhatsApp session logged out. Please pair again.'
+        );
+        return;
+      }
+
+      if (!reconnecting) {
+        reconnecting = true;
+
+        console.log(
+          '🔄 Reconnecting in 5 seconds...'
+        );
+
+        setTimeout(() => {
+          reconnecting = false;
+          startBot().catch(console.error);
+        }, 5000);
       }
     }
   });
@@ -120,7 +195,9 @@ async function startBot() {
       if (!msg?.message || msg.key.fromMe) return;
 
       const chat = msg.key.remoteJid;
-      const sender = msg.key.participant || msg.key.remoteJid;
+      const sender =
+        msg.key.participant ||
+        msg.key.remoteJid;
 
       const text =
         msg.message.conversation ||
@@ -129,8 +206,11 @@ async function startBot() {
         msg.message.videoMessage?.caption ||
         '';
 
-      const command = text.trim().split(/\s+/)[0].toLowerCase();
-      const args = text.trim().split(/\s+/).slice(1);
+      const command =
+        text.trim().split(/\s+/)[0].toLowerCase();
+
+      const args =
+        text.trim().split(/\s+/).slice(1);
 
       /*
       ============================
@@ -189,6 +269,7 @@ async function startBot() {
             delete: msg.key
           });
         } catch {}
+
         return;
       }
 
@@ -210,7 +291,8 @@ async function startBot() {
             });
 
             await sock.sendMessage(chat, {
-              text: '🚫 Links are not allowed in this group.'
+              text:
+                '🚫 Links are not allowed in this group.'
             });
           } catch {}
         }
@@ -246,7 +328,8 @@ async function startBot() {
 
       if (command === '.ping') {
         await sock.sendMessage(chat, {
-          text: '🏓 Pong!\n\n🤖 BerylsBot is online.'
+          text:
+            '🏓 Pong!\n\n🤖 BerylsBot is online.'
         });
       }
 
@@ -302,23 +385,27 @@ async function startBot() {
       else if (command === '.tagall') {
         if (!isGroup(chat)) {
           await sock.sendMessage(chat, {
-            text: '❌ This command only works in groups.'
+            text:
+              '❌ This command only works in groups.'
           });
+
           return;
         }
 
         if (!(await isAdmin(sock, chat, sender))) {
           await sock.sendMessage(chat, {
-            text: '❌ Only group admins can use .tagall.'
+            text:
+              '❌ Only group admins can use .tagall.'
           });
+
           return;
         }
 
-        const metadata = await sock.groupMetadata(chat);
+        const metadata =
+          await sock.groupMetadata(chat);
 
-        const mentions = metadata.participants.map(
-          p => p.id
-        );
+        const mentions =
+          metadata.participants.map(p => p.id);
 
         const message =
           args.length > 0
@@ -346,8 +433,10 @@ async function startBot() {
 
         if (!(await isAdmin(sock, chat, sender))) {
           await sock.sendMessage(chat, {
-            text: '❌ Only group admins can use .ban.'
+            text:
+              '❌ Only group admins can use .ban.'
           });
+
           return;
         }
 
@@ -357,8 +446,10 @@ async function startBot() {
 
         if (!mentioned.length) {
           await sock.sendMessage(chat, {
-            text: '❌ Mention the person you want to remove.'
+            text:
+              '❌ Mention the person you want to remove.'
           });
+
           return;
         }
 
@@ -373,7 +464,8 @@ async function startBot() {
         }
 
         await sock.sendMessage(chat, {
-          text: '✅ User removed from the group.'
+          text:
+            '✅ User removed from the group.'
         });
       }
 
@@ -388,8 +480,10 @@ async function startBot() {
 
         if (!(await isAdmin(sock, chat, sender))) {
           await sock.sendMessage(chat, {
-            text: '❌ Only group admins can use .mute.'
+            text:
+              '❌ Only group admins can use .mute.'
           });
+
           return;
         }
 
@@ -399,8 +493,10 @@ async function startBot() {
 
         if (!mentioned.length) {
           await sock.sendMessage(chat, {
-            text: '❌ Mention the person you want to mute.'
+            text:
+              '❌ Mention the person you want to mute.'
           });
+
           return;
         }
 
@@ -428,8 +524,10 @@ async function startBot() {
 
         if (!(await isAdmin(sock, chat, sender))) {
           await sock.sendMessage(chat, {
-            text: '❌ Only group admins can use .unmute.'
+            text:
+              '❌ Only group admins can use .unmute.'
           });
+
           return;
         }
 
@@ -439,8 +537,10 @@ async function startBot() {
 
         if (!mentioned.length) {
           await sock.sendMessage(chat, {
-            text: '❌ Mention the person you want to unmute.'
+            text:
+              '❌ Mention the person you want to unmute.'
           });
+
           return;
         }
 
@@ -469,17 +569,20 @@ async function startBot() {
           await sock.sendMessage(chat, {
             text: '❌ Admin only.'
           });
+
           return;
         }
 
-        const value = args[0]?.toLowerCase();
+        const value =
+          args[0]?.toLowerCase();
 
         if (value === 'on') {
           groupSettings.antilink = true;
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '🛡️ Antilink enabled.'
+            text:
+              '🛡️ Antilink enabled.'
           });
         }
 
@@ -488,7 +591,8 @@ async function startBot() {
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '🛡️ Antilink disabled.'
+            text:
+              '🛡️ Antilink disabled.'
           });
         }
 
@@ -496,7 +600,9 @@ async function startBot() {
           await sock.sendMessage(chat, {
             text:
               `Antilink: ${
-                groupSettings.antilink ? 'ON' : 'OFF'
+                groupSettings.antilink
+                  ? 'ON'
+                  : 'OFF'
               }\n\nUse:\n.antilink on\n.antilink off`
           });
         }
@@ -515,17 +621,20 @@ async function startBot() {
           await sock.sendMessage(chat, {
             text: '❌ Admin only.'
           });
+
           return;
         }
 
-        const value = args[0]?.toLowerCase();
+        const value =
+          args[0]?.toLowerCase();
 
         if (value === 'on') {
           groupSettings.autodelete = true;
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '🗑️ Autodelete enabled.'
+            text:
+              '🗑️ Autodelete enabled.'
           });
         }
 
@@ -534,7 +643,8 @@ async function startBot() {
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '🗑️ Autodelete disabled.'
+            text:
+              '🗑️ Autodelete disabled.'
           });
         }
 
@@ -542,7 +652,9 @@ async function startBot() {
           await sock.sendMessage(chat, {
             text:
               `Autodelete: ${
-                groupSettings.autodelete ? 'ON' : 'OFF'
+                groupSettings.autodelete
+                  ? 'ON'
+                  : 'OFF'
               }\n\nUse:\n.autodelete on\n.autodelete off`
           });
         }
@@ -561,17 +673,20 @@ async function startBot() {
           await sock.sendMessage(chat, {
             text: '❌ Admin only.'
           });
+
           return;
         }
 
-        const value = args[0]?.toLowerCase();
+        const value =
+          args[0]?.toLowerCase();
 
         if (value === 'on') {
           groupSettings.welcome = true;
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '👋 Welcome messages enabled.'
+            text:
+              '👋 Welcome messages enabled.'
           });
         }
 
@@ -580,7 +695,8 @@ async function startBot() {
           saveSettings();
 
           await sock.sendMessage(chat, {
-            text: '👋 Welcome messages disabled.'
+            text:
+              '👋 Welcome messages disabled.'
           });
         }
       }
@@ -594,7 +710,8 @@ async function startBot() {
       else if (command === '.groupstatus') {
         if (!isGroup(chat)) return;
 
-        const metadata = await sock.groupMetadata(chat);
+        const metadata =
+          await sock.groupMetadata(chat);
 
         await sock.sendMessage(chat, {
           text:
@@ -636,7 +753,10 @@ async function startBot() {
 
         const result =
           characters[
-            Math.floor(Math.random() * characters.length)
+            Math.floor(
+              Math.random() *
+              characters.length
+            )
           ];
 
         await sock.sendMessage(chat, {
@@ -663,7 +783,11 @@ async function startBot() {
         ];
 
         const game =
-          games[Math.floor(Math.random() * games.length)];
+          games[
+            Math.floor(
+              Math.random() * games.length
+            )
+          ];
 
         await sock.sendMessage(chat, {
           text:
@@ -684,8 +808,10 @@ async function startBot() {
 
         if (!question) {
           await sock.sendMessage(chat, {
-            text: '🤖 Usage: .ai your question'
+            text:
+              '🤖 Usage: .ai your question'
           });
+
           return;
         }
 
@@ -710,8 +836,10 @@ async function startBot() {
 
         if (!song) {
           await sock.sendMessage(chat, {
-            text: '🎵 Usage: .play song name'
+            text:
+              '🎵 Usage: .play song name'
           });
+
           return;
         }
 
@@ -781,7 +909,10 @@ async function startBot() {
       }
 
     } catch (error) {
-      console.error('Message error:', error);
+      console.error(
+        'Message error:',
+        error
+      );
     }
   });
 }
@@ -797,9 +928,13 @@ http.createServer((req, res) => {
     'Content-Type': 'text/plain'
   });
 
-  res.end('🤖 BerylsBot is running!');
+  res.end(
+    '🤖 BerylsBot is running!'
+  );
 }).listen(PORT, () => {
-  console.log(`🌐 Server running on port ${PORT}`);
+  console.log(
+    `🌐 Server running on port ${PORT}`
+  );
 });
 
 startBot().catch(console.error);
