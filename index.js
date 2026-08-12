@@ -82,13 +82,13 @@ async function startBot() {
   }
 
   const sock = makeWASocket({
-    auth: state,
-    ...(version ? { version } : {}),
-    logger: P({ level: 'silent' }),
-    printQRInTerminal: false,
-    markOnlineOnConnect: false,
-    generateHighQualityLinkPreview: false
-  });
+  auth: state,
+  ...(version ? { version } : {}),
+  logger: P({ level: 'silent' }),
+  printQRInTerminal: false,
+  markOnlineOnConnect: false,
+  browser: ['BerylsBot', 'Chrome', '1.0.0']
+});
 
   sock.ev.on('creds.update', saveCreds);
 
