@@ -98,35 +98,36 @@ async function startBot() {
   ============================
   */
 
-  if (
-    PHONE_NUMBER &&
-    !state.creds.registered
-  ) {
-    setTimeout(async () => {
+if (PHONE_NUMBER && !state.creds.registered) {
+  let pairingRequested = false;
+
+  sock.ev.on('connection.update', async (update) => {
+    const { qr } = update;
+
+    if (qr && !pairingRequested) {
+      pairingRequested = true;
+
       try {
         const number = PHONE_NUMBER.replace(/\D/g, '');
 
-        console.log(
-          '📱 Requesting WhatsApp pairing code...'
-        );
+        console.log('📱 Requesting WhatsApp pairing code...');
 
-        const code =
-          await sock.requestPairingCode(number);
+        const code = await sock.requestPairingCode(number);
 
         console.log('================================');
-        console.log(
-          '🤖 BERYLSBOT PAIRING CODE:',
-          code
-        );
+        console.log('🤖 BERYLSBOT PAIRING CODE:', code);
         console.log('================================');
       } catch (error) {
+        pairingRequested = false;
+
         console.error(
           '❌ Pairing code error:',
           error.message
         );
       }
-    }, 3000);
-  }
+    }
+  });
+}
 
   /*
   ============================
