@@ -96,7 +96,7 @@ async function startBot(phoneNumber) {
   markOnlineOnConnect: false,
   browser: ['BerylsBot', 'Chrome', '1.0.0']
 });
-
+botSock = sock;
   sock.ev.on('creds.update', saveCreds);
 
   /*
