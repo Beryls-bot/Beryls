@@ -8,9 +8,14 @@ const {
 const P = require('pino');
 const http = require('http');
 const fs = require('fs');
+const path = require('path');
+const sessionsDir = path.join(__dirname, 'sessions');
+
+if (!fs.existsSync(sessionsDir)) {
+  fs.mkdirSync(sessionsDir, { recursive: true });
+}
 
 const PORT = process.env.PORT || 3000;
-const PHONE_NUMBER = process.env.PHONE_NUMBER;
 
 const settingsFile = './settings.json';
 
@@ -61,10 +66,12 @@ async function isAdmin(sock, jid, user) {
 
 let reconnecting = false;
 
-async function startBot() {
-  const { state, saveCreds } =
-    await useMultiFileAuthState('./session');
 
+async function startBot(phoneNumber) {
+  const sessionPath = path.join(sessionsDir, phoneNumber);
+
+  const { state, saveCreds } =
+    await useMultiFileAuthState(sessionPath);
   let version;
 
   try {
