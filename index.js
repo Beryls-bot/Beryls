@@ -105,25 +105,8 @@ async function startBot(phoneNumber) {
   ============================
   */
 
-if (PHONE_NUMBER && !state.creds.registered) {
-  setTimeout(async () => {
-    try {
-      const number = PHONE_NUMBER.replace(/\D/g, '');
 
-      console.log('📱 Requesting WhatsApp pairing code...');
-
-      const code = await sock.requestPairingCode(number);
-
-      console.log('================================');
-      console.log('🤖 BERYLSBOT PAIRING CODE:', code);
-      console.log('================================');
-
-    } catch (error) {
-      console.error('❌ Pairing code error:', error.message);
-    }
-  }, 3000);
-}
-
+// Pairing is handled through the web interface.
   /*
   ============================
   CONNECTION
