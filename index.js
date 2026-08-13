@@ -65,7 +65,7 @@ async function isAdmin(sock, jid, user) {
 }
 
 let reconnecting = false;
-
+let botSock = null;
 
 async function startBot(phoneNumber) {
   const sessionPath = path.join(sessionsDir, phoneNumber);
